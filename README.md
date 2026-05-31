@@ -1,12 +1,61 @@
 # TrendTune
 
-TrendTune is an AI-powered trend analysis and product intelligence platform. Upload your product catalog, chat with an agent about trends and inventory, and get actionable insights — no login required (Firebase Anonymous Auth).
+TrendTune is an AI-powered trend analysis and product intelligence platform for retail and e-commerce teams. Upload a product catalog, ask questions in plain English, and get synthesized insights that connect **market trends** with **your actual inventory** — no login required (Firebase Anonymous Auth).
+
+## What this project demonstrates
+
+This repo is a **full-stack reference implementation** of an agentic AI product for retail intelligence. It shows how to go beyond a single chatbot prompt and build a system that:
+
+- Ingests messy real-world data (CSV product catalogs with arbitrary column names)
+- Maintains multi-turn conversation context across sessions
+- Routes user questions to the right AI capability automatically
+- Combines **live trend research** with **private product data** in one answer
+- Returns business-ready output (markdown, tables, charts, downloadable reports)
+- Runs as a deployable production stack (React frontend on Vercel, FastAPI backend on Modal)
+
+**Demo scenario:** A brand uploads their SKU list, then asks *"What trends are relevant to my products?"* or *"Which items should I prioritize this season?"* The system pulls their catalog from Firestore, queries trend intelligence via Grok, searches products via embeddings and pandas agents, and synthesizes a single actionable response.
+
+## AI skills showcased
+
+| Skill | Where it appears | What it does |
+|-------|----------------|--------------|
+| **Multi-agent orchestration** | `backend/main.py` → `orchestrate_with_llm` | An LLM planner decides whether to call the trend agent, SKU agent, or both — and in what order |
+| **Query classification & decomposition** | `module1.py` | Classifies prompts as product-related, trend-related, or both; splits them into focused sub-queries |
+| **Conversational context condensation** | `_condense_query` | Rewrites follow-up messages into self-contained queries using chat history |
+| **Hybrid RAG pipeline** | `run_query_pipeline` | Decomposes SKU questions into **vector** (semantic) and **table** (structured) sub-queries, runs each, chains results |
+| **Vector search / embeddings** | FAISS + OpenAI embeddings | Semantic product matching against the user's catalog |
+| **LangChain Pandas agent** | `module2.py`, `run_query_pipeline` | Natural language → SQL-like operations on product/review DataFrames |
+| **Multi-LLM routing** | OpenAI GPT-4o + xAI Grok-3 | OpenAI for reasoning, agents, and synthesis; Grok for live trend research with search |
+| **Structured LLM output** | Query planners, trend extraction | Prompts return parseable JSON for reliable downstream routing |
+| **Insight synthesis** | `insight_synthesizer`, `module4.py` | Merges trend + product outputs into one coherent business narrative |
+| **Rich response formatting** | Chat UI + synthesizer | Embeds `\t...\tx` tables and `\c...\cx` charts inside markdown responses |
+| **Client-side schema mapping** | `csvUpload.tsx` | OpenAI auto-maps arbitrary CSV columns to product fields on upload |
+| **Conversation summarization** | `/generate_summary` | Turns a full chat into a structured bullet-point report |
+| **Trend extraction from chat** | `/analyse_trends` | LLM reads conversation history and extracts fashion/consumer trends to store in Firestore |
+| **Context-aware fallbacks** | `module5.py` | Handles general/onboarding questions when the query isn't product or trend related |
+
+### Architecture at a glance
+
+```
+User question
+    │
+    ▼
+Condense with chat history (OpenAI)
+    │
+    ▼
+Orchestrator (OpenAI) ──► trend agent (Grok)     ──► live trend JSON
+                      └──► SKU agent (OpenAI)     ──► FAISS vector search
+                                                   └──► Pandas DataFrame agent
+    │
+    ▼
+Insight synthesizer (OpenAI) ──► markdown + tables + charts
+```
 
 ## Live demo
 
 | Service | URL |
 |---------|-----|
-| **App (Vercel)** | [https://frontend-lovat-five-56.vercel.app](https://frontend-lovat-five-56.vercel.app) |
+| **App (Vercel)** | [https://www.trendtune.ai](https://www.trendtune.ai) |
 | **API (Modal)** | [https://akshikrish--trendtune-api-fastapi-app.modal.run/docs](https://akshikrish--trendtune-api-fastapi-app.modal.run/docs) |
 
 The Vercel frontend is configured to call the Modal backend via `VITE_API_BASE_URL`.
