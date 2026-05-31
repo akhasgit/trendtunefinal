@@ -3,7 +3,8 @@
 import React from "react"
 import { useState, type DragEvent, type ChangeEvent } from "react"
 import { collection, addDoc, doc, setDoc, serverTimestamp, getDocs, getDoc } from "firebase/firestore"
-import { auth, db } from "../../firebase/firebase"
+import { db } from "../../firebase/firebase"
+import { useAnonymousAuth } from "../../hooks/useAnonymousAuth"
 import { CloudArrowUpIcon, DocumentIcon, CheckCircleIcon, ArrowPathIcon, SparklesIcon } from "@heroicons/react/24/solid"
 import FirstTimeUpload from "./firstTimeUpload"
 import { getOpenAIKey, OPENAI_CONFIG } from "../../config/openai"
@@ -30,6 +31,7 @@ interface CsvUploadProps {
 const csvSplit = /,(?=(?:[^"]*"[^"]*")*[^"]*$)/
 
 const CsvUpload: React.FC<CsvUploadProps> = ({ onUploadComplete }) => {
+  const { user } = useAnonymousAuth()
   const [isDragging, setIsDragging] = useState(false)
   const [fileName, setFileName] = useState<string | null>(null)
   const [csvHeaders, setCsvHeaders] = useState<string[]>([])
@@ -198,9 +200,8 @@ If a field cannot be mapped, use null. Only return the JSON object, no other tex
       alert("Please map at least Name and Description.")
       return
     }
-    const user = auth.currentUser
     if (!user) {
-      alert("Sign-in required")
+      alert("Please wait for authentication to complete.")
       return
     }
 

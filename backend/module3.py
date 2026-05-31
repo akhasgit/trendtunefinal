@@ -1,6 +1,6 @@
 # module3.py
 
-from langchain.schema import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
 from config import get_openai_api_key

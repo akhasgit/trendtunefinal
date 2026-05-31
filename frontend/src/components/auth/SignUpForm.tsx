@@ -49,7 +49,6 @@ export default function SignUpForm() {
         username,
         name:           `${fullName}`,
         email,
-        password,       // consider *not* storing raw passwords in Firestore!
         interests:      interests.split(",").map(s => s.trim()),
         industries:     industries.split(",").map(s => s.trim()),
         current_plan:   currentPlan,

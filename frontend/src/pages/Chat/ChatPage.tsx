@@ -1,5 +1,3 @@
-// src/pages/Chat/ChatPage.tsx
-
 import React, { useState, useEffect, useRef, FormEvent } from "react";
 import {
   PaperAirplaneIcon,
@@ -10,7 +8,6 @@ import {
   UserGroupIcon,
 } from "@heroicons/react/24/solid";
 import { useNavigate, useParams } from "react-router-dom";
-import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
   doc,
@@ -20,18 +17,14 @@ import {
   onSnapshot,
   query,
   orderBy,
-  getDoc,
-  where,
-  getDocs,
-  Timestamp,
 } from "firebase/firestore";
-import { auth, db } from "../../firebase/firebase";
+import { db } from "../../firebase/firebase";
+import { useAnonymousAuth } from "../../hooks/useAnonymousAuth";
 import axios from "axios";
 import qs from "qs";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 
-// ─── Chart.js IMPORTS ───────────────────────────────────────────────────────────
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -53,7 +46,8 @@ ChartJS.register(
   Tooltip,
   Legend
 );
-// ────────────────────────────────────────────────────────────────────────────────
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://agenticchattt-310229311797.asia-southeast1.run.app";
 
 export interface ChatPageProps {
   chatId?: string | null;
@@ -89,7 +83,6 @@ const LineChartComponent: React.FC<{
   xLabel: string;
   yLabel: string;
 }> = ({ data, labels, xLabel, yLabel }) => {
-  // first 12 points in blue, next 6 (including the 12th→13th segment) in green
   const firstData = data.map((v, idx) => (idx < 12 ? v : null));
   const secondData = data.map((v, idx) => (idx >= 11 ? v : null));
 
@@ -124,18 +117,8 @@ const LineChartComponent: React.FC<{
       title: { display: false },
     },
     scales: {
-      x: {
-        title: {
-          display: true,
-          text: xLabel,
-        },
-      },
-      y: {
-        title: {
-          display: true,
-          text: yLabel,
-        },
-      },
+      x: { title: { display: true, text: xLabel } },
+      y: { title: { display: true, text: yLabel } },
     },
   };
 
@@ -146,6 +129,7 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
   const { chatId: propChatId, setChatId: propSetChatId } = props;
   const { chatId: paramChatId } = useParams<{ chatId: string }>();
   const navigate = useNavigate();
+  const { user } = useAnonymousAuth();
 
   const chatId = propChatId ?? paramChatId ?? null;
   const setChatId =
@@ -183,34 +167,25 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
   );
 
   const typingMessages = [
-    "🔍 Analyzing market data...",
-    "📊 Reading through product insights...",
-    "📈 Identifying key trends...",
-    "🎯 Tailoring recommendations...",
-    "💡 Generating personalized insights...",
+    "Analyzing market data...",
+    "Reading through product insights...",
+    "Identifying key trends...",
+    "Tailoring recommendations...",
+    "Generating personalized insights...",
   ];
   const [currentTypingMessage, setCurrentTypingMessage] = useState(
     typingMessages[0]
   );
 
-  // 1) Redirect if not signed in
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (!user) navigate("/signin", { replace: true });
-    });
-    return unsub;
-  }, [navigate]);
-
-  // 2) Subscribe to messages whenever chatId changes
-  useEffect(() => {
-    if (!chatId) {
+    if (!chatId || !user) {
       setMessages([]);
       return;
     }
     const msgsCol = collection(
       db,
       "Sessions",
-      auth.currentUser!.uid,
+      user.uid,
       "chats",
       chatId,
       "messages"
@@ -224,20 +199,18 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
             id: d.id,
             sender: data.sender,
             content: data.content,
-            timestamp: data.timestamp.toDate(),
+            timestamp: data.timestamp?.toDate?.() ?? new Date(),
           };
         })
       );
     });
     return unsub;
-  }, [chatId]);
+  }, [chatId, user]);
 
-  // 3) Auto-scroll on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // 4) Update typing indicator message every 2 seconds
   useEffect(() => {
     if (isTyping) {
       const interval = setInterval(() => {
@@ -256,21 +229,18 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
   ): Promise<string> => {
     const formData = qs.stringify({ userid, chatId, prompt: userMessage });
     try {
-      // const response = await axios.post("http://0.0.0.0:8000/ask_ai", formData, {
-      const response = await axios.post("https://agenticchattt-310229311797.asia-southeast1.run.app/ask_ai", formData, {
-        
+      const response = await axios.post(`${API_BASE}/ask_ai`, formData, {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           Accept: "application/json",
         },
       });
-      return response.data.response ?? response.data ?? "✅ No reply.";
+      return response.data.response ?? response.data ?? "No reply.";
     } catch (error: any) {
-      console.error("❌ Axios error:", error);
-      return "❌ Failed to process your request.";
+      console.error("Axios error:", error);
+      return "Failed to process your request.";
     }
   };
-
 
   const summary = async (
     userMessage: string,
@@ -279,77 +249,24 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
   ): Promise<string> => {
     const formData = qs.stringify({ userid, chatId, prompt: userMessage });
     try {
-      // const response = await axios.post("http://0.0.0.0:8000/generate_summary", formData, {
-        const response = await axios.post("https://agenticchattt-310229311797.asia-southeast1.run.app/generate_summary", formData, {
+      const response = await axios.post(`${API_BASE}/generate_summary`, formData, {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           Accept: "application/json",
         },
       });
-      return response.data.response ?? response.data ?? "✅ No reply.";
+      return response.data.response ?? response.data ?? "No reply.";
     } catch (error: any) {
-      console.error("❌ Axios error:", error);
-      return "❌ Failed to process your request.";
+      console.error("Axios error:", error);
+      return "Failed to process your request.";
     }
   };
 
-  // 5) Handle send: optimistic UI + backend writes
   const handleSend = async (e: FormEvent) => {
     e.preventDefault();
     const text = inputValue.trim();
-    if (!text) return;
+    if (!text || !user) return;
 
-    // —— free-plan daily message cap check ——
-    const user = auth.currentUser;
-    if (user) {
-      const userSnap = await getDoc(doc(db, "users", user.uid));
-      const plan = userSnap.data()?.current_plan as string;
-      if (plan === "free") {
-        const now = new Date();
-        const startOfDay = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          now.getDate(),
-          0,
-          0,
-          0
-        );
-        const endOfDay = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          now.getDate(),
-          23,
-          59,
-          59
-        );
-        const startTS = Timestamp.fromDate(startOfDay);
-        const endTS = Timestamp.fromDate(endOfDay);
-
-        if (chatId) {
-          const msgQuery = query(
-            collection(
-              db,
-              "Sessions",
-              user.uid,
-              "chats",
-              chatId,
-              "messages"
-            ),
-            where("sender", "==", "user"),
-            where("timestamp", ">=", startTS),
-            where("timestamp", "<=", endTS)
-          );
-          const todaySnap = await getDocs(msgQuery);
-          if (todaySnap.size >= 50) {
-            alert("Subscribe to get more messages.");
-            return;
-          }
-        }
-      }
-    }
-    // ——————————————————————
-
-    // Optimistic UI
     const optimisticMsg: Msg = {
       id: `temp-${Date.now()}`,
       sender: "user",
@@ -363,9 +280,7 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
     try {
       let id = chatId;
 
-      // If first message, create thread
       if (!id) {
-        const user = auth.currentUser!;
         const chatsCol = collection(db, "Sessions", user.uid, "chats");
         const newChatRef = doc(chatsCol);
         id = newChatRef.id;
@@ -376,103 +291,39 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
           last_chat_session: text,
           chat_trends_covered: [],
           created_at: serverTimestamp(),
-          
-          
         });
-
-        const msgCol = collection(
-          db,
-          "Sessions",
-          auth.currentUser!.uid,
-          "chats",
-          id,
-          "messages"
-        );
-        await addDoc(msgCol, {
-          sender: "user",
-          content: text,
-          timestamp: serverTimestamp(),
-          rated: null,
-        });
-        setIsTyping(true);
-        const botReply = await fetchBotResponse(text, auth.currentUser!.uid, id);
-        setIsTyping(false);
-        await addDoc(msgCol, {
-          sender: "bot",
-          content: botReply,
-          timestamp: serverTimestamp(),
-          rated: null,
-        });
-      
-        
-
       }
 
-      else{
-        
-      
-      // alert("else");
-      // // Write user message
-      // const msgCol = collection(
-      //   db,
-      //   "Sessions",
-      //   auth.currentUser!.uid,
-      //   "chats",
-      //   id,
-      //   "messages"
-      // );
-      // await addDoc(msgCol, {
-      //   sender: "user",
-      //   content: text,
-      //   timestamp: serverTimestamp(),
-      //   rated: null,
-      // });
+      const msgCol = collection(
+        db,
+        "Sessions",
+        user.uid,
+        "chats",
+        id,
+        "messages"
+      );
+      await addDoc(msgCol, {
+        sender: "user",
+        content: text,
+        timestamp: serverTimestamp(),
+        rated: null,
+      });
 
-      // // Fetch & save bot reply
-      // const botReply = await fetchBotResponse(text, auth.currentUser!.uid, id);
-      // setIsTyping(false);
-      // await addDoc(msgCol, {
-      //   sender: "bot",
-      //   content: botReply,
-      //   timestamp: serverTimestamp(),
-      //   rated: null,
-      // });
-    
-
-      // const formData2 = qs.stringify({
-      //   user_id: auth.currentUser!.uid,
-      //   chat_id: chatId,
-      // });
-      // axios
-      //   .post(
-      //     // "http://0.0.0.0:8000/analyse_trends",
-      //     "https://agenticchattt-310229311797.asia-southeast1.run.app/analyse_trends",
-      //     formData2,
-      //     {
-      //       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      //     }
-      //   )
-      //   .catch((e) => console.error("Error in analyse_trends:", e));
-    
-    
-    }
-   
-   
-    } 
-    
-    
-    
-    catch (err) {
+      const botReply = await fetchBotResponse(text, user.uid, id);
+      setIsTyping(false);
+      await addDoc(msgCol, {
+        sender: "bot",
+        content: botReply,
+        timestamp: serverTimestamp(),
+        rated: null,
+      });
+    } catch (err) {
       console.error("Chat send failed:", err);
       setIsTyping(false);
     }
-
-
-  
-    };
+  };
 
   const handleGenerateReportClick = async () => {
-    const user = auth.currentUser;
     if (!user || !chatId) return;
 
     const msgCol = collection(db, "Sessions", user.uid, "chats", chatId, "messages");
@@ -493,7 +344,7 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
 
     await addDoc(msgCol, {
       sender: "bot",
-      content: "botReply",
+      content: botReply,
       timestamp: serverTimestamp(),
       rated: null,
     });
@@ -510,96 +361,93 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
 
   const handleQuickPrompt = (prompt: string) => {
     setInputValue(prompt);
-    handleSend({ preventDefault: () => {} } as unknown as FormEvent);
+    setTimeout(() => {
+      handleSend({ preventDefault: () => {} } as unknown as FormEvent);
+    }, 0);
   };
 
-  // ─── Render bot content, handling table (\t...\tx) and chart (\c...\cx) flags ───
   const renderBotContent = (content: string) => {
-    // 1) Table flag
     const tableRegex = /\\t([\s\S]*?)\\tx/;
     const tableMatch = content.match(tableRegex);
     if (tableMatch) {
-      const tableInner = tableMatch[1].trim();
-      const { columns, rows } = JSON.parse(tableInner);
-      const before = content.slice(0, tableMatch.index);
-      const after = content.slice((tableMatch.index || 0) + tableMatch[0].length);
-      return (
-        <>
-          {before && renderBotContent(before)}
-          <div className="my-4 overflow-auto">
-            <table className="min-w-full bg-white rounded-lg overflow-hidden shadow-sm">
-              <thead>
-                <tr>
-                  {columns.map((col: string) => (
-                    <th
-                      key={col}
-                      className="px-4 py-2 text-left text-sm font-medium text-gray-600 bg-gray-100"
-                    >
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row: any[], idx: number) => (
-                  <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                    {row.map((cell: any, j: number) => (
-                      <td
-                        key={j}
-                        className="px-4 py-2 text-sm text-gray-700"
-                      >
-                        {cell}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {after && renderBotContent(after)}
-        </>
-      );
-    }
-
-    // 2) Chart flag
-    const chartRegex = /\\c([\s\S]*?)\\cx/;
-    const match = content.match(chartRegex);
-    if (match) {
-      const inner = match[1].trim();
-      const parts = inner.split(/\],\s*(?=\[)/);
-      if (parts.length >= 2) {
-        const dataArray = JSON.parse(parts[0] + "]");
-        const labelsArray = JSON.parse(parts[1]);
-        const [yLabel, xLabel] = labelsArray as [string, string];
-        const xValues = (dataArray as number[]).map((_, i) => `${i + 1}`);
-
-        const markdownWithoutChart = content.replace(chartRegex, "");
+      try {
+        const tableInner = tableMatch[1].trim();
+        const { columns, rows } = JSON.parse(tableInner);
+        const before = content.slice(0, tableMatch.index);
+        const after = content.slice((tableMatch.index || 0) + tableMatch[0].length);
         return (
           <>
-            <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-              {markdownWithoutChart}
-            </ReactMarkdown>
-            <div className="mt-4">
-              <LineChartComponent
-                data={dataArray as number[]}
-                labels={xValues}
-                xLabel={xLabel}
-                yLabel={yLabel}
-              />
+            {before && renderBotContent(before)}
+            <div className="my-4 overflow-auto">
+              <table className="min-w-full bg-white rounded-lg overflow-hidden shadow-sm">
+                <thead>
+                  <tr>
+                    {columns.map((col: string) => (
+                      <th key={col} className="px-4 py-2 text-left text-sm font-medium text-gray-600 bg-gray-100">
+                        {col}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row: any[], idx: number) => (
+                    <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                      {row.map((cell: any, j: number) => (
+                        <td key={j} className="px-4 py-2 text-sm text-gray-700">{cell}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+            {after && renderBotContent(after)}
           </>
         );
+      } catch {
+        /* fall through to markdown */
       }
     }
 
-    // 3) Fallback: plain markdown
+    const chartRegex = /\\c([\s\S]*?)\\cx/;
+    const match = content.match(chartRegex);
+    if (match) {
+      try {
+        const inner = match[1].trim();
+        const parts = inner.split(/\],\s*(?=\[)/);
+        if (parts.length >= 2) {
+          const dataArray = JSON.parse(parts[0] + "]");
+          const labelsArray = JSON.parse(parts[1]);
+          const [yLabel, xLabel] = labelsArray as [string, string];
+          const xValues = (dataArray as number[]).map((_, i) => `${i + 1}`);
+
+          const markdownWithoutChart = content.replace(chartRegex, "");
+          return (
+            <>
+              <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                {markdownWithoutChart}
+              </ReactMarkdown>
+              <div className="mt-4">
+                <LineChartComponent
+                  data={dataArray as number[]}
+                  labels={xValues}
+                  xLabel={xLabel}
+                  yLabel={yLabel}
+                />
+              </div>
+            </>
+          );
+        }
+      } catch {
+        /* fall through to markdown */
+      }
+    }
+
     return (
       <ReactMarkdown rehypePlugins={[rehypeRaw]}>
         {content}
       </ReactMarkdown>
     );
   };
-  // ─────────────────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col bg-white-200">
@@ -613,29 +461,17 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
                   <QuickPromptButton
                     label="Show me the latest trends in my industry"
                     Icon={ChartBarIcon}
-                    onClick={() =>
-                      handleQuickPrompt(
-                        "Show me the latest trends in my industry"
-                      )
-                    }
+                    onClick={() => handleQuickPrompt("Show me the latest trends in my industry")}
                   />
                   <QuickPromptButton
                     label="What are the top products in my SKU I should sell"
                     Icon={ListBulletIcon}
-                    onClick={() =>
-                      handleQuickPrompt(
-                        "What are the top products in my SKU I should sell"
-                      )
-                    }
+                    onClick={() => handleQuickPrompt("What are the top products in my SKU I should sell")}
                   />
                   <QuickPromptButton
                     label="What are the trends that are relevant to my product SKU"
                     Icon={MagnifyingGlassCircleIcon}
-                    onClick={() =>
-                      handleQuickPrompt(
-                        "What are the trends that are relevant to my product SKU"
-                      )
-                    }
+                    onClick={() => handleQuickPrompt("What are the trends that are relevant to my product SKU")}
                   />
                   <QuickPromptButton
                     label="Pick a random product and show me a new target segment"
@@ -653,9 +489,7 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
             {messages.map((m) => (
               <div
                 key={m.id}
-                className={`my-2 flex ${
-                  m.sender === "user" ? "justify-end" : "justify-start"
-                }`}
+                className={`my-2 flex ${m.sender === "user" ? "justify-end" : "justify-start"}`}
               >
                 <div
                   className={`p-3 rounded-lg max-w-[80%] whitespace-pre-wrap ${
@@ -664,9 +498,7 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
                       : "bg-white-200 text-gray-900"
                   }`}
                 >
-                  {m.sender === "bot"
-                    ? renderBotContent(m.content)
-                    : m.content}
+                  {m.sender === "bot" ? renderBotContent(m.content) : m.content}
                 </div>
               </div>
             ))}
@@ -688,9 +520,7 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
             <input
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              placeholder={
-                chatId ? "Type a message..." : "What can I help you with today?"
-              }
+              placeholder={chatId ? "Type a message..." : "What can I help you with today?"}
               className="flex-1 rounded-lg p-3 border border-gray-600 text-gray-900 placeholder-gray-500 shadow-none focus:outline-none focus:ring-2 focus:ring-blue-600"
               aria-label="Type your message"
               tabIndex={0}
@@ -698,25 +528,9 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
 
             {isTyping ? (
               <div className="p-3">
-                <svg
-                  className="animate-spin h-6 w-6 text-blue-600"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v8z"
-                  />
+                <svg className="animate-spin h-6 w-6 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                 </svg>
               </div>
             ) : (
@@ -734,7 +548,7 @@ const ChatPage: React.FC<ChatPageProps> = (props) => {
                 type="button"
                 onClick={handleGenerateReportClick}
                 aria-label="Generate"
-                className="group inline-flex items-center gap-2 p-3 rounded-lg 
+                className="group inline-flex items-center gap-2 p-3 rounded-lg
                            bg-transparent hover:bg-green-50 focus:outline-none focus:ring-2
                            focus:ring-green-500 transition"
               >

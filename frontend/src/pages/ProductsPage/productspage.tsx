@@ -13,7 +13,8 @@ import {
   setDoc,
   arrayUnion,
 } from "firebase/firestore";
-import { onAuthStateChanged, User } from "firebase/auth";
+import { User } from "firebase/auth";
+import { useAnonymousAuth } from "../../hooks/useAnonymousAuth";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import qs from "qs";
@@ -80,8 +81,11 @@ const getRandomPopularity = () => {
   return { value, isUp: value >= 50 };
 };
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://agenticchattt-310229311797.asia-southeast1.run.app";
+
 const ProductsPage: React.FC = () => {
   const navigate = useNavigate();
+  const { user: authUser, loading: authLoading } = useAnonymousAuth();
   /* ---------- state ---------- */
   const [productLists, setProductLists] = useState<ProductList[]>([]);
   const [selectedListIndex, setSelectedListIndex] = useState<number | null>(0);
@@ -126,7 +130,7 @@ const ProductsPage: React.FC = () => {
   const update_file = async (uid: string) => {
     try {
       const res = await axios.post(
-        "https://ttdev-310229311797.asia-southeast1.run.app/products/all-products-and-reviews",
+        `${API_BASE}/products/all-products-and-reviews`,
         qs.stringify({ user_id: uid }),
         { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
       );
@@ -138,18 +142,16 @@ const ProductsPage: React.FC = () => {
     }
   };
 
-  /* ──────────────────────────── Auth + initial load ──────────────────────────── */
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setUserId(user.uid);
-        await fetchAllProductLists(user);
-        await fetchUserShopifyStores(user);
-      }
-      setLoading(false);
-    });
-    return unsub;
-  }, []);
+    if (authLoading) return;
+    if (authUser) {
+      setUserId(authUser.uid);
+      fetchAllProductLists(authUser).then(() =>
+        fetchUserShopifyStores(authUser)
+      );
+    }
+    setLoading(false);
+  }, [authUser, authLoading]);
 
   /* Fetch user’s stores */
   const fetchUserShopifyStores = async (user: User) => {

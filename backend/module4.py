@@ -1,7 +1,7 @@
 # module4.py
 
 from langchain_openai import ChatOpenAI
-from langchain.schema import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from config import get_openai_api_key
 

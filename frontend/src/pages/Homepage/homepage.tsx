@@ -3,9 +3,9 @@
 import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { Link, useNavigate } from "react-router-dom"
-import { onAuthStateChanged } from "firebase/auth"
 import { collection, getDocs, doc, getDoc, addDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore"
-import { auth, db } from "../../firebase/firebase"
+import { db } from "../../firebase/firebase"
+import { useAnonymousAuth } from "../../hooks/useAnonymousAuth"
 import {
   PlusIcon,
   ChatBubbleLeftRightIcon,
@@ -66,8 +66,8 @@ interface DebugAction {
 }
 
 const HomePage: React.FC = () => {
-  // Set this to true to enable debug mode
   const DEBUG_MODE = false
+  const { user: authUser, loading: authLoading } = useAnonymousAuth()
 
   const [loading, setLoading] = useState(true)
   const [hasProducts, setHasProducts] = useState(false)
@@ -110,50 +110,46 @@ const HomePage: React.FC = () => {
   const [showDemographicModal, setShowDemographicModal] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        try {
-          /** ------------ 1) Product lists check ------------ */
-          const listSnap = await getDocs(collection(db, "products", user.uid, "productLists"))
-          setHasProducts(listSnap.docs.length > 0)
+    if (authLoading) return;
+    if (!authUser) {
+      setHasProducts(false)
+      setQuickActions([])
+      setCurrentPlan(null)
+      setLoading(false)
+      return
+    }
 
-          /** ------------ 2) Homepage metrics ------------ */
-          const infoSnap = await getDoc(doc(db, "homepageInfo", user.uid))
-          if (infoSnap.exists()) {
-            const d = infoSnap.data()
-            setAlignmentScore(d.AlignmentScore ?? null)
-            setNeedsAttention(d.needsAttention ?? null)
-            setProductsAligned(d.productsAligned ?? null)
-            setNewSuggestions(d.newSuggestions ?? null)
-            setMapId(d.mapId ?? "")
-          }
+    const loadData = async () => {
+      try {
+        const listSnap = await getDocs(collection(db, "products", authUser.uid, "productLists"))
+        setHasProducts(listSnap.docs.length > 0)
 
-          /** ------------ 3) Quick actions from Firestore ------------ */
-          await loadQuickActions(user.uid)
-
-          /** ------------ 4) Plan info (free / paid) ------------ */
-          const userSnap = await getDoc(doc(db, "users", user.uid))
-          if (userSnap.exists()) {
-            setCurrentPlan(userSnap.data().current_plan ?? null) // 'free', 'pro', etc.
-          }
-        } catch (err) {
-          console.error("Error loading homepage data:", err)
-          // fallbacks
-          setHasProducts(false)
-          setQuickActions([])
+        const infoSnap = await getDoc(doc(db, "homepageInfo", authUser.uid))
+        if (infoSnap.exists()) {
+          const d = infoSnap.data()
+          setAlignmentScore(d.AlignmentScore ?? null)
+          setNeedsAttention(d.needsAttention ?? null)
+          setProductsAligned(d.productsAligned ?? null)
+          setNewSuggestions(d.newSuggestions ?? null)
+          setMapId(d.mapId ?? "")
         }
-      } else {
-        // no user signed-in
+
+        await loadQuickActions(authUser.uid)
+
+        const userSnap = await getDoc(doc(db, "users", authUser.uid))
+        if (userSnap.exists()) {
+          setCurrentPlan(userSnap.data().current_plan ?? null)
+        }
+      } catch (err) {
+        console.error("Error loading homepage data:", err)
         setHasProducts(false)
         setQuickActions([])
-        setCurrentPlan(null)
       }
-
       setLoading(false)
-    })
+    }
 
-    return () => unsubscribe()
-  }, [])
+    loadData()
+  }, [authUser, authLoading])
 
   // Global keyboard shortcut for search
   useEffect(() => {
@@ -291,26 +287,23 @@ const HomePage: React.FC = () => {
     product_name: "",
     product_description: "",
     product_id: null,
-    user_id: auth.currentUser?.uid || "",
+    user_id: authUser?.uid || "",
     created_at: new Date().toISOString(),
   })
 
   const handleDebugSave = async (action: DebugAction) => {
-    if (!auth.currentUser) return
+    if (!authUser) return
 
     try {
       const { actionId, ...actionData } = action
 
       if (actionId && actionId !== "") {
-        // Update existing action
-        await updateDoc(doc(db, "quickActions", auth.currentUser.uid, "actions", actionId), actionData)
+        await updateDoc(doc(db, "quickActions", authUser.uid, "actions", actionId), actionData)
       } else {
-        // Create new action
-        await addDoc(collection(db, "quickActions", auth.currentUser.uid, "actions"), actionData)
+        await addDoc(collection(db, "quickActions", authUser.uid, "actions"), actionData)
       }
 
-      // Reload actions
-      await loadQuickActions(auth.currentUser.uid)
+      await loadQuickActions(authUser.uid)
       setShowDebugModal(false)
       setEditingAction(null)
     } catch (err) {
@@ -320,11 +313,11 @@ const HomePage: React.FC = () => {
   }
 
   const handleDebugDelete = async (actionId: string) => {
-    if (!auth.currentUser || !confirm("Are you sure you want to delete this action?")) return
+    if (!authUser || !confirm("Are you sure you want to delete this action?")) return
 
     try {
-      await deleteDoc(doc(db, "quickActions", auth.currentUser.uid, "actions", actionId))
-      await loadQuickActions(auth.currentUser.uid)
+      await deleteDoc(doc(db, "quickActions", authUser.uid, "actions", actionId))
+      await loadQuickActions(authUser.uid)
     } catch (err) {
       console.error("Error deleting debug action:", err)
       alert("Failed to delete action")

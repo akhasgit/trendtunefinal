@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { auth, db } from '../firebase/firebase';
+import { db } from '../firebase/firebase';
+import { useAnonymousAuth } from '../hooks/useAnonymousAuth';
 import { ActionDocument, isNewSchema, isCurrentSchema, NewActionDocument, FirestoreAction } from '../types/actions';
 import { generateActionDisplay } from '../utils/actionDisplay';
 import { ArrowPathIcon, CheckCircleIcon, ClockIcon } from '@heroicons/react/24/outline';
@@ -12,24 +13,25 @@ const AllQuickActionsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('all');
+  const { user, loading: authLoading } = useAnonymousAuth();
 
   useEffect(() => {
-    if (auth.currentUser) {
+    if (authLoading) return;
+    if (user) {
       loadQuickActions();
     } else {
-      setError('User not authenticated');
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, user, authLoading]);
 
   const loadQuickActions = async () => {
-    if (!auth.currentUser) return;
+    if (!user) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const actionsRef = collection(db, 'quickActions', auth.currentUser.uid, 'actions');
+      const actionsRef = collection(db, 'quickActions', user.uid, 'actions');
       let q = query(actionsRef, orderBy('createdAt', 'desc'));
 
       // Apply filter if not showing all

@@ -1,9 +1,6 @@
-// src/components/header/UserDropdown.tsx
-
 import { useState, useEffect } from "react";
-import { DropdownItem } from "../ui/dropdown/DropdownItem";
 import { Dropdown } from "../ui/dropdown/Dropdown";
-import {  useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { auth } from "../../firebase/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
@@ -11,14 +8,18 @@ import { db } from "../../firebase/firebase";
 
 export default function UserDropdown() {
   const [isOpen, setIsOpen] = useState(false);
-  const [userName, setUserName] = useState("");
+  const [userName, setUserName] = useState("Guest");
   const [userEmail, setUserEmail] = useState("");
   const navigate = useNavigate();
 
-  // Load the signed‑in user's name & email
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
+        if (user.isAnonymous) {
+          setUserName("Guest User");
+          setUserEmail("");
+          return;
+        }
         setUserEmail(user.email || "");
         try {
           const snap = await getDoc(doc(db, "users", user.uid));
@@ -33,7 +34,7 @@ export default function UserDropdown() {
           setUserName(user.displayName || "");
         }
       } else {
-        setUserName("");
+        setUserName("Guest");
         setUserEmail("");
       }
     });
@@ -48,25 +49,13 @@ export default function UserDropdown() {
     setIsOpen(false);
   }
 
-  // Sign out and redirect to /signin
   const handleSignOut = async () => {
     try {
       await signOut(auth);
       closeDropdown();
-      navigate("/signin", { replace: true });
+      navigate("/", { replace: true });
     } catch (err) {
       console.error("Sign-out error:", err);
-    }
-  };
-
-
-
-  const handleGoToSubscriptions = () => {
-    try {
-      closeDropdown();
-      navigate("/subscriptions", { replace: false });
-    } catch (err) {
-      console.error("Navigation error:", err);
     }
   };
 
@@ -105,34 +94,21 @@ export default function UserDropdown() {
         onClose={closeDropdown}
         className="absolute right-0 mt-[17px] w-[260px] flex-col rounded-2xl border border-gray-200 bg-white p-3 shadow-theme-lg dark:border-gray-800 dark:bg-gray-dark"
       >
-        {/* User info */}
         <div className="pb-4 border-b border-gray-200 dark:border-gray-800">
           <span className="block font-medium text-gray-700 text-theme-sm dark:text-gray-400">
             {userName}
           </span>
-          <span className="mt-0.5 block text-theme-xs text-gray-500 dark:text-gray-400">
-            {userEmail}
-          </span>
+          {userEmail && (
+            <span className="mt-0.5 block text-theme-xs text-gray-500 dark:text-gray-400">
+              {userEmail}
+            </span>
+          )}
         </div>
 
-        
-        <button
-          onClick={handleGoToSubscriptions}
-          className="flex w-full items-center gap-3 px-3 py-2 mt-3 font-medium text-gray-700 rounded-lg text-theme-sm hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/5"
-        >
-          {/* …sign‑out icon… */}
-          Subscription
-        </button>
-
-        
-
-
-        {/* Only show Sign out */}
         <button
           onClick={handleSignOut}
           className="flex w-full items-center gap-3 px-3 py-2 mt-3 font-medium text-gray-700 rounded-lg text-theme-sm hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/5"
         >
-          {/* …sign‑out icon… */}
           Sign out
         </button>
       </Dropdown>

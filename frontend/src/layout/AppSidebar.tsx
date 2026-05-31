@@ -4,8 +4,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useSidebar } from "../context/SidebarContext";
 import { auth, db } from "../firebase/firebase";
-import { onAuthStateChanged } from "firebase/auth";
 import { collection, onSnapshot, setDoc, doc } from "firebase/firestore";
+import { useAnonymousAuth } from "../hooks/useAnonymousAuth";
 
 import { GridIcon, BoxCubeIcon, PlugInIcon, TrendsIcon } from "../icons";
 
@@ -33,37 +33,30 @@ const AppSidebar: React.FC = () => {
   const [chats, setChats] = useState<ChatItem[]>([]);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState<string>("");
+  const { user } = useAnonymousAuth();
 
-  // subscribe to auth → then chats collection
   useEffect(() => {
-    let unsubChats: () => void;
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        const chatsCol = collection(db, "Sessions", user.uid, "chats");
-        unsubChats = onSnapshot(chatsCol, (snap) => {
-          setChats(
-            snap.docs.map((d) => {
-              const data = d.data() as any;
-              return {
-                id: d.id,
-                title:
-                  data.chat_summary ||
-                  data.last_chat_session ||
-                  `Chat ${d.id.slice(0, 5)}`,
-              };
-            })
-          );
-        });
-      } else {
-        setChats([]);
-      }
+    if (!user) {
+      setChats([]);
+      return;
+    }
+    const chatsCol = collection(db, "Sessions", user.uid, "chats");
+    const unsub = onSnapshot(chatsCol, (snap) => {
+      setChats(
+        snap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            title:
+              data.chat_summary ||
+              data.last_chat_session ||
+              `Chat ${d.id.slice(0, 5)}`,
+          };
+        })
+      );
     });
-
-    return () => {
-      unsubAuth();
-      if (unsubChats) unsubChats();
-    };
-  }, []);
+    return unsub;
+  }, [user]);
 
   const isActive = useCallback(
     (path: string) => location.pathname === path,
@@ -80,7 +73,8 @@ const AppSidebar: React.FC = () => {
   };
 
   const handleTitleSubmit = async (chatId: string) => {
-    const chatRef = doc(db, "Sessions", auth.currentUser!.uid, "chats", chatId);
+    if (!user) return;
+    const chatRef = doc(db, "Sessions", user.uid, "chats", chatId);
     await setDoc(chatRef, { chat_summary: editingTitle }, { merge: true });
     setEditingChatId(null);
   };

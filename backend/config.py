@@ -1,8 +1,12 @@
 import json
 import os
+from pathlib import Path
 
 import firebase_admin
+from dotenv import load_dotenv
 from firebase_admin import credentials, initialize_app
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 
 def get_openai_api_key() -> str:

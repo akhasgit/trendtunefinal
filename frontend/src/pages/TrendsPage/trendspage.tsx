@@ -16,13 +16,10 @@ import {
   Timestamp,
   serverTimestamp,
 } from "firebase/firestore";
-import {
-  getAuth,
-  onAuthStateChanged,
-  User as FirebaseUser,
-} from "firebase/auth";
+import { User as FirebaseUser } from "firebase/auth";
 import { ArrowUpIcon, ArrowDownIcon } from "@heroicons/react/24/solid";
-import { auth, db } from "../../firebase/firebase";
+import { db } from "../../firebase/firebase";
+import { useAnonymousAuth } from "../../hooks/useAnonymousAuth";
 
 // ────────── Utility: Random "past year" Date ──────────
 function getRandomPastDate(): Date {
@@ -288,6 +285,7 @@ const TrendsPage: React.FC = () => {
   >("All");
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [expandedTrend, setExpandedTrend] = useState<string | null>(null);
+  const { user: authUser, loading: authLoading } = useAnonymousAuth();
 
   // ────────── Load all TrendsRepo definitions into a map ──────────
   const loadAllTrendDefinitions = async (): Promise<
@@ -475,31 +473,25 @@ const TrendsPage: React.FC = () => {
     (viewFilter === "All" || viewFilter === "Recent") && !isSearching;
   const showRecommended = viewFilter === "Recommended" && !isSearching;
 
-  // ────────── Auth + Data Loading ──────────
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setCurrentUser(user);
-        loadUserTrendsFromFirestore(user.uid);
-      } else {
-        setCurrentUser(null);
-        // Load definitions with defaults
-        loadAllTrendDefinitions().then((defs) => {
-          const defaults: Trend[] = Object.values(defs).map((def) => ({
-            ...def,
-            lastAccessed: getRandomPastDate(),
-            watchList: false,
-            recent: false,
-            relevantSKUs: [],
-          }));
-          setTrends(defaults);
-        });
-      }
-    });
-    return () => {
-      unsubscribeAuth();
-    };
-  }, []);
+    if (authLoading) return;
+    if (authUser) {
+      setCurrentUser(authUser);
+      loadUserTrendsFromFirestore(authUser.uid);
+    } else {
+      setCurrentUser(null);
+      loadAllTrendDefinitions().then((defs) => {
+        const defaults: Trend[] = Object.values(defs).map((def) => ({
+          ...def,
+          lastAccessed: getRandomPastDate(),
+          watchList: false,
+          recent: false,
+          relevantSKUs: [],
+        }));
+        setTrends(defaults);
+      });
+    }
+  }, [authUser, authLoading]);
 
   // If user signs out, reload definitions with defaults
   useEffect(() => {

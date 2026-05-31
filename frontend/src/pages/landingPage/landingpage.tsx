@@ -303,7 +303,7 @@ const LandingPage: React.FC = () => {
                 Pricing
               </a>
               <Link
-                to="/login" // TODO: Replace with actual login route
+                to="/signin"
                 className="text-gray-600 hover:text-gray-900 transition-colors"
               >
                 Login

@@ -14,19 +14,15 @@ const App: React.FC = () => {
   return (
     <Router>
       <Routes>
-        {/* When the user goes to "/", render HomePage */}
         <Route path="/" element={<HomePage />} />
         <Route path="/signin" element={<SignIn />} />
         <Route path="/signup" element={<SignUp />} />
-
-        {/* Optional: catch-all to always render HomePage for any unknown URL */}
-        <Route path="*" element={<HomePage />} />
         <Route path="/products" element={<ProductsPage />} />
-        <Route path="chat/:chatId" element={<ChatPage />} />
+        <Route path="/chat/:chatId" element={<ChatPage />} />
         <Route path="/first-upload" element={<FirstTimeUpload />} />
         <Route path="/landingpage" element={<LandingPage />} />
         <Route path="/all-quick-actions" element={<AllQuickActionsPage />} />
-
+        <Route path="*" element={<HomePage />} />
       </Routes>
     </Router>
   );
