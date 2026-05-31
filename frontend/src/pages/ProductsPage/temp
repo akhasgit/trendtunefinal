@@ -1,0 +1,483 @@
+// src/pages/Products/ProductsPage.tsx
+import React, { useState, useRef, useEffect } from "react";
+import { auth, db } from "../../firebase/firebase";
+import {
+  collection,
+  addDoc,
+  getDocs,
+  deleteDoc,
+  doc,
+  updateDoc,
+  serverTimestamp,
+  setDoc,
+} from "firebase/firestore";
+import { onAuthStateChanged, User } from "firebase/auth";
+import axios from "axios";
+import qs from "qs";
+import { SparklesIcon } from "@heroicons/react/24/solid";
+
+/* ────────────────────────────  NEW: Shopify-scraper utilities  ──────────────────────────── */
+
+interface ShopifyProduct {
+  [key: string]: any;
+}
+
+/** Normalise a Shopify store URL so we always get e.g. https://yourshop.myshopify.com */
+function normalizeStoreUrl(storeUrl: string): string {
+  try {
+    const url = new URL(storeUrl);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    // user omitted scheme
+    return `https://${storeUrl.replace(/^(?:https?:\/\/)?/, "")}`;
+  }
+}
+
+/** Remove HTML tags & decode entities from a string */
+function stripHtml(html: string): string {
+  if (!html) return "";
+  // Browser-safe decode & strip
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return doc.body.textContent ?? "";
+}
+
+/**
+ * Fetch **all** products from a store’s public `/products.json` endpoint
+ * (paginates 250-per-page using the Link header).
+ */
+async function fetchAllProducts(storeUrl: string): Promise<ShopifyProduct[]> {
+  const base = normalizeStoreUrl(storeUrl);
+  let url   = `${base}/products.json?limit=250`;
+  const all: ShopifyProduct[] = [];
+
+  while (url) {
+    const res = await fetch(url, { headers: { "User-Agent": "Product-Scraper/1.0" } });
+    if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+
+    const json = await res.json();
+    all.push(...(json.products ?? []));
+
+    const link = res.headers.get("link");
+    const next = link?.split(",").find((l) => /rel="next"/.test(l));
+    url = next ? next.match(/<([^>]+)>/)?.[1] ?? "" : "";
+  }
+  return all;
+}
+
+/** Trigger a download for the given data / mime */
+function downloadFile(data: string, filename: string, mime: string) {
+  const blob = new Blob([data], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Convert array of objects to CSV (simple flat) */
+function toCsv(items: ShopifyProduct[]): string {
+  if (items.length === 0) return "";
+  const keys   = Array.from(new Set(items.flatMap((it) => Object.keys(it))));
+  const header = keys.join(",");
+  const rows   = items.map((it) =>
+    keys
+      .map((k) => {
+        let v = it[k];
+        if (k === "body_html") v = stripHtml(v);      // ← CLEAN HTML HERE
+        const s = v == null ? "" : String(v).replace(/"/g, '""');
+        return `"${s}"`;
+      })
+      .join(",")
+  );
+  return [header, ...rows].join("\r\n");
+}
+
+/* ────────────────────────────  Types  ──────────────────────────── */
+
+interface Product {
+  productName: string;
+  productDescription: string;
+  productQuantity: number;
+  id?: string;
+}
+
+interface ProductList {
+  id: string; // "unsaved" before push
+  products: Product[];
+}
+
+/* ────────────────────────────  Component  ──────────────────────────── */
+
+const ProductsPage: React.FC = () => {
+  /* ---------- state ---------- */
+  const [productLists, setProductLists] = useState<ProductList[]>([]);
+  const [selectedListIndex, setSelectedListIndex] = useState<number | null>(0);
+  const [viewAll, setViewAll] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  /* CSV mapping */
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [rawCsvRows, setRawCsvRows] = useState<string[][]>([]);
+  const [mappingSelections, setMappingSelections] = useState<{
+    name?: string;
+    description?: string;
+    quantity?: string;
+  }>({});
+
+  /* Review mapping */
+  const [reviewCsvHeaders, setReviewCsvHeaders] = useState<string[]>([]);
+  const [rawReviewRows, setRawReviewRows] = useState<string[][]>([]);
+  const [reviewMappingSelections, setReviewMappingSelections] = useState<{
+    name?: string;
+    reviewText?: string;
+    sentiment?: string;
+  }>({});
+
+  /* ---------- refs ---------- */
+  const skuInputRef    = useRef<HTMLInputElement>(null);
+  const reviewInputRef = useRef<HTMLInputElement>(null);
+  const [currentReviewListId, setCurrentReviewListId] = useState<string | null>(null);
+  const [reviewUploading, setReviewUploading]       = useState(false);
+  const [listsWithReviews, setListsWithReviews]     = useState<Set<string>>(new Set());
+
+  /* ────────────────────────────  Shopify modal state ──────────────────────────── */
+  const [showShopifyModal, setShowShopifyModal] = useState(false);
+  const [shopifyUrl, setShopifyUrl]             = useState("");
+
+  /* ────────────────────────────  Helper: sync vector store ──────────────────────────── */
+  const update_file = async (uid: string) => {
+    try {
+      const res = await axios.post(
+        "https://ttdev-310229311797.asia-southeast1.run.app/products/all-products-and-reviews",
+        qs.stringify({ user_id: uid }),
+        { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      );
+      if (res.data.vector_store_id) {
+        await setDoc(doc(db, "users", uid), { vector_store_id: res.data.vector_store_id }, { merge: true });
+      }
+    } catch (e) {
+      console.error("Vector sync failed:", e);
+    }
+  };
+
+  /* ────────────────────────────  Shopify submit handler  ──────────────────────────── */
+  const handleShopifySubmit = async () => {
+    if (!shopifyUrl) return;
+    try {
+      setError(null);
+
+      // fetch EVERY product
+      const products = await fetchAllProducts(shopifyUrl);
+
+      // strip HTML in body_html **before** download
+      products.forEach((p) => {
+        if (p.body_html) p.body_html = stripHtml(p.body_html);
+      });
+
+      downloadFile(JSON.stringify(products, null, 2), "products.json", "application/json");
+      downloadFile(toCsv(products), "products.csv", "text/csv");
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Failed to fetch Shopify products.");
+    } finally {
+      setShowShopifyModal(false);
+      setShopifyUrl("");
+    }
+  };
+
+  /* ────────────────────────────  Auth + initial load ──────────────────────────── */
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUserId(user.uid);
+        await fetchAllProductLists(user);
+      }
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  /* ────────────────────────────  Fetch lists & reviews flag ──────────────────────────── */
+  const fetchAllProductLists = async (user: User) => {
+    try {
+      const listsCol = collection(db, "products", user.uid, "productLists");
+      const listSnap = await getDocs(listsCol);
+      const loaded: ProductList[] = [];
+      for (const l of listSnap.docs) {
+        const prodsSnap = await getDocs(collection(db, "products", user.uid, "productLists", l.id, "products"));
+        loaded.push({
+          id: l.id,
+          products: prodsSnap.docs.map((p) => {
+            const d = p.data() as any;
+            return { id: p.id, productName: d.productName, productDescription: d.productDescription, productQuantity: d.productQuantity };
+          }),
+        });
+      }
+      setProductLists(loaded);
+
+      const flags = new Set<string>();
+      for (const list of loaded) {
+        const snap = await getDocs(collection(db, "products", user.uid, "productLists", list.id, "reviews"));
+        if (!snap.empty) flags.add(list.id);
+      }
+      setListsWithReviews(flags);
+    } catch (err) {
+      console.error(err);
+      setError("Error loading product lists.");
+    }
+  };
+
+
+  // src/pages/Products/ProductsPage.tsx
+import React, { useState, useRef, useEffect } from "react";
+import { auth, db } from "../../firebase/firebase";
+import {
+  collection,
+  addDoc,
+  getDocs,
+  deleteDoc,
+  doc,
+  updateDoc,
+  serverTimestamp,
+  setDoc,
+} from "firebase/firestore";
+import { onAuthStateChanged, User } from "firebase/auth";
+import axios from "axios";
+import qs from "qs";
+import { SparklesIcon } from "@heroicons/react/24/solid";
+
+/* ────────────────────────────  NEW: Shopify-scraper utilities  ──────────────────────────── */
+
+interface ShopifyProduct {
+  [key: string]: any;
+}
+
+/** Normalise a Shopify store URL so we always get e.g. https://yourshop.myshopify.com */
+function normalizeStoreUrl(storeUrl: string): string {
+  try {
+    const url = new URL(storeUrl);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    // user omitted scheme
+    return `https://${storeUrl.replace(/^(?:https?:\/\/)?/, "")}`;
+  }
+}
+
+/**
+ * Fetch **all** products from a store’s public `/products.json` endpoint
+ * (paginates 250-per-page using the Link header).
+ */
+async function fetchAllProducts(storeUrl: string): Promise<ShopifyProduct[]> {
+  const base = normalizeStoreUrl(storeUrl);
+  let url   = `${base}/products.json?limit=250`;
+  const all: ShopifyProduct[] = [];
+
+  while (url) {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Product-Scraper/1.0" },
+    });
+    if (!res.ok) {
+      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+    }
+
+    const json = await res.json();
+    all.push(...(json.products ?? []));
+
+    // pagination: look for rel="next" link
+    const link = res.headers.get("link");
+    const next = link?.split(",").find((l) => /rel="next"/.test(l));
+    url = next ? next.match(/<([^>]+)>/)?.[1] ?? "" : "";
+    /* optional politeness delay
+    if (url) await new Promise((r) => setTimeout(r, 400));
+    */
+  }
+  return all;
+}
+
+/** Trigger a download for the given data / mime */
+function downloadFile(data: string, filename: string, mime: string) {
+  const blob = new Blob([data], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Convert array of objects to CSV (simple flat) */
+function toCsv(items: ShopifyProduct[]): string {
+  if (items.length === 0) return "";
+  // build superset of keys
+  const keys = Array.from(new Set(items.flatMap((it) => Object.keys(it))));
+  const header = keys.join(",");
+  const rows = items.map((it) =>
+    keys
+      .map((k) => {
+        const v =
+          it[k] == null ? "" : String(it[k]).replace(/"/g, '""');
+        return `"${v}"`;
+      })
+      .join(",")
+  );
+  return [header, ...rows].join("\r\n");
+}
+
+/* ────────────────────────────  Types  ──────────────────────────── */
+
+interface Product {
+  productName: string;
+  productDescription: string;
+  productQuantity: number;
+  id?: string;
+}
+
+interface ProductList {
+  id: string; // "unsaved" before push
+  products: Product[];
+}
+
+/* ────────────────────────────  Component  ──────────────────────────── */
+
+const ProductsPage: React.FC = () => {
+  /* ---------- state ---------- */
+  const [productLists, setProductLists] = useState<ProductList[]>([]);
+  const [selectedListIndex, setSelectedListIndex] = useState<number | null>(0);
+  const [viewAll, setViewAll] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  /* CSV mapping */
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [rawCsvRows, setRawCsvRows] = useState<string[][]>([]);
+  const [mappingSelections, setMappingSelections] = useState<{
+    name?: string;
+    description?: string;
+    quantity?: string;
+  }>({});
+
+  /* Review mapping */
+  const [reviewCsvHeaders, setReviewCsvHeaders] = useState<string[]>([]);
+  const [rawReviewRows, setRawReviewRows] = useState<string[][]>([]);
+  const [reviewMappingSelections, setReviewMappingSelections] = useState<{
+    name?: string;
+    reviewText?: string;
+    sentiment?: string;
+  }>({});
+
+  /* ---------- refs ---------- */
+  const skuInputRef = useRef<HTMLInputElement>(null);
+  const reviewInputRef = useRef<HTMLInputElement>(null);
+  const [currentReviewListId, setCurrentReviewListId] = useState<string | null>(
+    null
+  );
+  const [reviewUploading, setReviewUploading] = useState(false);
+  const [listsWithReviews, setListsWithReviews] = useState<Set<string>>(
+    new Set()
+  );
+
+  /* ────────────────────────────  Shopify modal state ──────────────────────────── */
+  const [showShopifyModal, setShowShopifyModal] = useState(false);
+  const [shopifyUrl, setShopifyUrl] = useState("");
+
+  /* ────────────────────────────  Helper: sync vector store ──────────────────────────── */
+  const update_file = async (uid: string) => {
+    try {
+      const res = await axios.post(
+        "https://ttdev-310229311797.asia-southeast1.run.app/products/all-products-and-reviews",
+        qs.stringify({ user_id: uid }),
+        { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      );
+      if (res.data.vector_store_id) {
+        await setDoc(
+          doc(db, "users", uid),
+          { vector_store_id: res.data.vector_store_id },
+          { merge: true }
+        );
+      }
+    } catch (e) {
+      console.error("Vector sync failed:", e);
+    }
+  };
+
+  /* ────────────────────────────  Shopify submit handler  ──────────────────────────── */
+  const handleShopifySubmit = async () => {
+    if (!shopifyUrl) return;
+    try {
+      setError(null);
+      // fetch EVERY product, not just 10
+      const products = await fetchAllProducts(shopifyUrl);
+
+      // download JSON + CSV
+      downloadFile(
+        JSON.stringify(products, null, 2),
+        "products.json",
+        "application/json"
+      );
+      downloadFile(toCsv(products), "products.csv", "text/csv");
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Failed to fetch Shopify products.");
+    } finally {
+      setShowShopifyModal(false);
+      setShopifyUrl("");
+    }
+  };
+
+  /* ────────────────────────────  Auth + initial load ──────────────────────────── */
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUserId(user.uid);
+        await fetchAllProductLists(user);
+      }
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  /* ────────────────────────────  Fetch lists & reviews flag ──────────────────────────── */
+  const fetchAllProductLists = async (user: User) => {
+    try {
+      const listsCol = collection(db, "products", user.uid, "productLists");
+      const listSnap = await getDocs(listsCol);
+      const loaded: ProductList[] = [];
+      for (const l of listSnap.docs) {
+        const prodsSnap = await getDocs(
+          collection(db, "products", user.uid, "productLists", l.id, "products")
+        );
+        loaded.push({
+          id: l.id,
+          products: prodsSnap.docs.map((p) => {
+            const d = p.data() as any;
+            return {
+              id: p.id,
+              productName: d.productName,
+              productDescription: d.productDescription,
+              productQuantity: d.productQuantity,
+            };
+          }),
+        });
+      }
+      setProductLists(loaded);
+
+      /* review flags */
+      const flags = new Set<string>();
+      for (const list of loaded) {
+        const snap = await getDocs(
+          collection(db, "products", user.uid, "productLists", list.id, "reviews")
+        );
+        if (!snap.empty) flags.add(list.id);
+      }
+      setListsWithReviews(flags);
+    } catch (err) {
+      console.error(err);
+      setError("Error loading product lists.");
+    }
+  };
